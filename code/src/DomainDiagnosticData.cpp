@@ -257,6 +257,29 @@ void DomainDiagnosticData::setCFdata()
  
 }
 
+/// Load masks for DomainDiagnosticData output
+void DomainDiagnosticData::loadMask()
+{
+  ParmParse pp_amr("amr");
+  m_domain_diagnostic_data_mask_file = "";
+  m_num_domain_diagnostic_data_masks = 0;
+  pp_amr.query("domain_diagnostic_data_mask_file", m_domain_diagnostic_data_mask_file);
+  pp_amr.query("num_domain_diagnostic_data_masks", m_num_domain_diagnostic_data_masks);
+  if (m_num_domain_diagnostic_data_masks > 0)
+  {
+    pp_amr.getarr("domain_diagnostic_data_mask_names", m_domain_diagnostic_data_mask_names, 0, m_num_domain_diagnostic_data_masks);
+    for (int ii=0; ii<m_num_domain_diagnostic_data_masks; ii++)
+    {
+	  m_domain_diagnostic_data_mask.push_back(RefCountedPtr<LevelData<FArrayBox> > (new LevelData<FArrayBox>));
+    }
+    readLevelData(m_domain_diagnostic_data_mask,m_domain_diagnostic_data_mask_dx,m_domain_diagnostic_data_mask_file,m_domain_diagnostic_data_mask_names,1);
+    for (int ii=0; ii<m_num_domain_diagnostic_data_masks; ii++)
+    {
+	  pout() << "DomainDiagnosticData::updateGeometry: Successfully read DomainDiagnosticData mask "<< m_domain_diagnostic_data_mask_names[ii] << " from file " << m_domain_diagnostic_data_mask_file << ". dx = " << m_domain_diagnostic_data_mask_dx << std::endl;
+    }
+  }
+}
+
 
 void
 DomainDiagnosticData::initDiagnostics
@@ -283,16 +306,6 @@ DomainDiagnosticData::initDiagnostics
 
 void DomainDiagnosticData::record(AmrIce& a_amrIce)
 {
-	
-  ParmParse pp_amr("amr");
-  m_mask_domain_diagnostic_data = false;
-  m_domain_diagnostic_data_mask_file = "";
-  m_num_domain_diagnostic_data_masks = 0;
-  pp_amr.query("mask_domain_diagnostic_data", m_mask_domain_diagnostic_data);
-  pp_amr.query("domain_diagnostic_data_mask_file", m_domain_diagnostic_data_mask_file);
-  pp_amr.query("num_domain_diagnostic_data_masks", m_num_domain_diagnostic_data_masks);
-  pp_amr.queryarr("domain_diagnostic_data_mask_names", m_domain_diagnostic_data_mask_names, 0, m_num_domain_diagnostic_data_masks);
-
   Real dt = 1.2345678e+300;
   size_t ithis = m_time.size();
   size_t iprev = ithis - 1;
@@ -312,7 +325,7 @@ void DomainDiagnosticData::record(AmrIce& a_amrIce)
       hab[lev] = (const_cast<LevelData<FArrayBox>* >(&(coords[lev]->getThicknessOverFlotation())));
       thk[lev] = (const_cast<LevelData<FArrayBox>* >(&(coords[lev]->getH())));
       topg[lev] = (const_cast<LevelData<FArrayBox>* >(&(coords[lev]->getTopography())));
-      if (m_mask_domain_diagnostic_data)
+      if (m_num_domain_diagnostic_data_masks > 0)
         {
 	  sectorMaskFraction[lev] = new LevelData<FArrayBox>(a_amrIce.grids(lev), 1, IntVect::Zero);
 	}
@@ -326,7 +339,6 @@ void DomainDiagnosticData::record(AmrIce& a_amrIce)
   Vector<LevelData<FArrayBox>* >& frac = a_amrIce.m_iceFrac;
  
   
-  //int maskNo = (m_mask_domain_diagnostic_data) ? 1 : 0; int maskComp = 0; // might support this later
   int maskNo = 0; int maskComp = 0; // might support this later
   Real h_min = TINY_THICKNESS;
 
@@ -386,20 +398,14 @@ void DomainDiagnosticData::record(AmrIce& a_amrIce)
 	}
 	
   // If we want this output calculated for seperate subdomains defined by a mask
-  if (m_mask_domain_diagnostic_data)
+  if (m_num_domain_diagnostic_data_masks > 0)
     {
       for (int ii=0; ii<m_num_domain_diagnostic_data_masks; ii++) 
 	{
-	  m_domain_diagnostic_data_mask = RefCountedPtr<LevelData<FArrayBox> >(new LevelData<FArrayBox>);
-	  Vector<RefCountedPtr<LevelData<FArrayBox> > > vectData(1, m_domain_diagnostic_data_mask);
-	  Vector<string> name(1,m_domain_diagnostic_data_mask_names[ii]);
-	  readLevelData(vectData,m_domain_diagnostic_data_mask_dx,m_domain_diagnostic_data_mask_file,name,1);
-	  pout() << "DomainDiagnosticData::updateGeometry: Successfully read DomainDiagnosticData mask "<< m_domain_diagnostic_data_mask_names[ii] << " from file " << m_domain_diagnostic_data_mask_file << ". dx = " << m_domain_diagnostic_data_mask_dx << std::endl;
-	  
 	  for (int lev = 0; lev < n; lev++)
 	    {
 	      const RealVect& domainDiagnosticDataDx = RealVect::Unit*m_domain_diagnostic_data_mask_dx;
-	      FillFromReference(*sectorMaskFraction[lev], *m_domain_diagnostic_data_mask, a_amrIce.dx(lev), domainDiagnosticDataDx, true);
+	      FillFromReference(*sectorMaskFraction[lev], *m_domain_diagnostic_data_mask[ii], a_amrIce.dx(lev), domainDiagnosticDataDx, true);
 	  }
 		
 	  pout() << "DomainDiagnosticData: time = " << std::fixed << std::setprecision(3) << m_time[nt] << " | " << m_domain_diagnostic_data_mask_names[ii] << ": time = " << std::setprecision(12) << std::scientific << a_amrIce.time() << " " << std::defaultfloat << "yr" << std::endl; 
@@ -764,16 +770,19 @@ void DomainDiagnosticData::read(HDF5Handle& a_handle)
 DomainDiagnosticData::DomainDiagnosticData()
 {
   setCFdata();
+  loadMask();
 }
 
 DomainDiagnosticData::DomainDiagnosticData(const DomainDiagnosticData& a)
 {
   setCFdata();
+  loadMask();
 }
 
 DomainDiagnosticData&  DomainDiagnosticData::operator=(const DomainDiagnosticData& a)
 {
   setCFdata();
+  loadMask();
   return *this;
 }
 
